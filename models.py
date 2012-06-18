@@ -2,7 +2,7 @@ import sys, os
 from ConfigParser import SafeConfigParser
 
 from modbot_site import app
-from flaskext.sqlalchemy import SQLAlchemy
+from flask.ext.sqlalchemy import SQLAlchemy
 
 
 cfg_file = SafeConfigParser()
@@ -24,6 +24,7 @@ class Subreddit(db.Model):
     """Table containing the subreddits for the bot to monitor.
 
     name - The subreddit's name. "gaming", not "/r/gaming".
+    network - If the subreddit is part of a network, the network's short name. e.g. "sfwpn"
     enabled - Subreddit will not be checked if False
     last_submission - The newest unfiltered submission the bot has seen
     last_spam - The newest filtered submission the bot has seen
@@ -46,6 +47,7 @@ class Subreddit(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)
+    network = db.Column(db.Integer, db.ForeignKey('networks.id'), nullable=True)
     enabled = db.Column(db.Boolean, nullable=False, default=True)
     last_submission = db.Column(db.DateTime, nullable=False)
     last_spam = db.Column(db.DateTime, nullable=False)
@@ -55,11 +57,44 @@ class Subreddit(db.Model):
     reported_comments_only = db.Column(db.Boolean, nullable=False,
                                        default=False)
 
+class Network(db.Model):
+    
+    """Table containing a list of subreddit networks, groups of subreddits that
+        share moderators, rules, etc.
+    
+    short_name - the short name of the network. e.g. "sfwpn"
+    name - the long name of the network. e.g. "Safe for Work Porn Network"
+    enabled - network will be ignored if False
+    network_subreddit - if the network has a master subreddit, that subreddit's name.
+    moderation_subreddit - Subreddit to post removals to, ala r/ModerationPorn
+    network_mods - if True, all mods of all network subreddits will be made mods
+        of the master subreddit. requires valid `subreddit`
+    network_contribs - if True, all mods of all network subreddits will be made
+        approved submitters of the master subreddit. requires valid `subreddit`
+    
+    """
+    
+    __tablename__ = 'networks'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    short_name = db.Column(db.String(100), nullable=False, unique=True)
+    name = db.Column(db.String(500), nullable=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    network_subreddit = db.Column(db.String(100), nullable=True)
+    moderation_subreddit = db.Column(db.String(100), nullable=True)
+    network_mods = db.Column(db.Boolean, nullable=False, default=False)
+    network_contribs = db.Column(db.Boolean, nullable=False, default=False)
+
 
 class Condition(db.Model):
 
     """Table containing the conditions for each subreddit.
 
+    subreddit_id - which subreddit this condition applies to. Null if network
+        condition
+    network_id - which network this condition applies to. Null if subreddit
+        condition
+    network_id
     subject - The type of item to check
     attribute - Which attribute of the item to check
     value - A regex checked against the attribute. Automatically surrounded
@@ -87,6 +122,8 @@ class Condition(db.Model):
     comment_method - What method the bot should use to deliver its comment
         when this condition is matched - reply to the item itself, send
         a PM to the item's author, or modmail to the subreddit
+    log_method - If 'submit', bot will submit the removal to its network's
+        moderation_subreddit
     comment - If set, bot will post this comment using the defined method
         when this condition is matched
     notes - not used by bot, space to keep notes on a condition
@@ -96,7 +133,8 @@ class Condition(db.Model):
     __tablename__ = 'conditions'
 
     id = db.Column(db.Integer, primary_key=True)
-    subreddit_id = db.Column(db.Integer, db.ForeignKey('subreddits.id'))
+    subreddit_id = db.Column(db.Integer, db.ForeignKey('subreddits.id'), nullable=True)
+    network_id = db.Column(db.Integer, db.ForeignKey('networks.id'), nullable=True)
     subject = db.Column(db.Enum('submission',
                                 'comment',
                                 'both',
@@ -141,8 +179,12 @@ class Condition(db.Model):
                                        'message',
                                        'modmail',
                                        name='comment_method'))
+    log_method = db.Column(db.Enum('none',
+                                   'submit',
+                                   name='log_method'))
     comment = db.Column(db.Text)
     notes = db.Column(db.Text)
+    short_reason = db.Column(db.String(255))
 
     subreddit = db.relationship('Subreddit',
         backref=db.backref('conditions', lazy='dynamic'))
@@ -197,3 +239,6 @@ class AutoReapproval(db.Model):
     subreddit = db.relationship('Subreddit',
         backref=db.backref('auto_reapprovals', lazy='dynamic'))
 
+
+
+db.create_all()

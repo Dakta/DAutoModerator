@@ -11,7 +11,7 @@ from sqlalchemy.sql import and_
 from sqlalchemy.orm.exc import NoResultFound
 
 from models import cfg_file, path_to_cfg, db, Subreddit, Condition, \
-    ActionLog, AutoReapproval
+    ActionLog, AutoReapproval, Network
 
 # global reddit session
 r = None
@@ -519,6 +519,9 @@ def respond_to_modmail(modmail, start_time):
                 'this post would have been approved automatically even '
                 'without you sending this message.')
 
+def publish_modlog(modlog):
+    return True
+
 
 def get_meme_name(item):
     """Gets the item's meme name, if relevant/possible."""
@@ -557,6 +560,51 @@ def get_meme_name(item):
     except:
         pass
     return None
+    
+def get_moderationlog(subreddit):
+    """Retrieves a subreddit's moderation log, in lieu of a functional API implementation"""
+    url = 'http://reddit.com/r/%s/about/log/' % subreddit
+    
+    # load the page and extract the modlog
+    try:
+        page = urllib2.urlopen(url)
+        soup = BeautifulSoup(page)
+        status = page.getcode()
+        
+        # does the subreddit exist?
+        if (status == '302'):
+           logging.info('Subreddit /r/%s does not exist', subreddit)
+        elif (status == '200'):
+            # parse out the modlog
+            modlog = {}
+            result = soup
+        else:
+            #dafuq happened here?
+           logging.info('Something unexpected happened while attempting to access %s, STATUS %s', url, status)
+        
+    except HTTPError, e:
+       logging.info('You do not have permission to access the modlog on /r/%s', subreddit) 
+    
+    return None
+    
+def check_network_moderators(network, sr_dict):
+    """Makes sure moderators of subreddits in networks are moderators of neywork_subreddit"""        
+    checked_mods = 0
+    network_sr = r.get_subreddit(network.network_subreddit)
+    # get modlist for network sub    
+    network_mods = network_sr.get_moderators()
+
+    for subreddit in sr_dict.itervalues():
+        # iterate over modlist, only check mods not already mods of network sub
+        for mod in r.get_subreddit(subreddit.name).get_moderators():
+            if mod not in network_mods:
+                network_sr.make_moderator(mod.name)
+                checked_mods += 1
+            
+    return checked_mods
+
+check_network_moderators.checked_mods = set()
+
 
 
 def elapsed_since(start_time):
@@ -604,26 +652,10 @@ def condition_complexity(condition):
     return complexity
 
 
-def main():
-    logging.config.fileConfig(path_to_cfg)
-    start_utc = datetime.utcnow()
-    start_time = time()
-
-    global r
-    try:
-        r = reddit.Reddit(user_agent=cfg_file.get('reddit', 'user_agent'))
-        logging.info('Logging in as %s', cfg_file.get('reddit', 'username'))
-        r.login(cfg_file.get('reddit', 'username'),
-            cfg_file.get('reddit', 'password'))
-
-        subreddits = Subreddit.query.filter(Subreddit.enabled == True).all()
-        sr_dict = dict()
-        for subreddit in subreddits:
-            sr_dict[subreddit.name.lower()] = subreddit
-        mod_subreddit = r.get_subreddit('mod')
-    except Exception as e:
-        logging.error('  ERROR: %s', e)
-
+def do_subreddits(mod_subreddit, sr_dict, start_utc):
+    """Checks conditions and performs actions for subreddits in sr_dict"""
+    
+    
     # check reports
     items = mod_subreddit.get_reports(limit=1000)
     stop_time = datetime.utcnow() - REPORT_BACKLOG_LIMIT
@@ -634,6 +666,7 @@ def main():
     stop_time = (db.session.query(func.max(Subreddit.last_spam))
                  .filter(Subreddit.enabled == True).one()[0])
     check_items('spam', items, sr_dict, stop_time)
+    print('KABOOM  ', db.session.query(func.max(Subreddit.last_spam)).filter(Subreddit.enabled == True).statement)
 
     # check new submissions
     items = mod_subreddit.get_new_by_date(limit=1000)
@@ -642,7 +675,8 @@ def main():
     check_items('submission', items, sr_dict, stop_time)
 
     # check new comments
-    comment_multi = '+'.join([s.name for s in subreddits
+#     comment_multi = '+'.join([s.name for s in subreddits
+    comment_multi = '+'.join([s.name for s in sr_dict.itervalues()
                               if not s.reported_comments_only])
     if comment_multi:
         comment_multi_sr = r.get_subreddit(comment_multi)
@@ -656,6 +690,67 @@ def main():
         respond_to_modmail(r.user.get_modmail(), start_utc)
     except Exception as e:
         logging.error('  ERROR: %s', e)
+
+
+
+def main():
+    logging.config.fileConfig(path_to_cfg)
+    start_utc = datetime.utcnow()
+    start_time = time()
+
+    global r
+    try:
+        r = reddit.Reddit(user_agent=cfg_file.get('reddit', 'user_agent'))
+        logging.info('Logging in as %s', cfg_file.get('reddit', 'username'))
+        r.login(cfg_file.get('reddit', 'username'),
+            cfg_file.get('reddit', 'password'))
+    except Exception as e:
+        logging.error('  ERROR: %s', e)
+
+    mod_subreddit = r.get_subreddit('mod')
+
+
+    #
+    # Do actions on individual subreddits
+    #
+    
+    # get subreddit list
+    subreddits = Subreddit.query.filter(Subreddit.enabled == True).all()
+    sr_dict = dict()
+    for subreddit in subreddits:
+        sr_dict[subreddit.name.lower()] = subreddit
+    
+    # do actions on subreddits
+    do_subreddits(mod_subreddit, sr_dict, start_utc)
+
+
+    #
+    # Do actions on networks
+    #
+    mods_checked = 0
+
+    # get network list
+    networks = Network.query.filter(Network.enabled == True).all()
+    
+    # do actions on each network
+    for network in networks:
+        # get subreddits in network
+        network_subs = Subreddit.query.filter(Subreddit.network == network.id, Subreddit.enabled == True).all()
+        network_sr_dict = dict()
+        for subreddit in network_subs:
+            network_sr_dict[subreddit.name.lower()] = subreddit
+        
+        # do subreddit actions on subreddits
+        do_subreddits(mod_subreddit, network_sr_dict, start_utc)
+        
+        # check network mods
+        logging.info('Checking network moderators')
+        for subreddit in network_sr_dict.itervalues():
+            # only check subs in networks
+            if subreddit.network:
+                mods_checked += check_network_moderators(network, network_sr_dict)
+    
+    logging.info('  Checked %s networks, added %s moderators', len(networks), mods_checked)
 
     logging.info('Completed full run in %s', elapsed_since(start_time))
 
