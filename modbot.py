@@ -666,8 +666,7 @@ def do_subreddits(mod_subreddit, sr_dict, start_utc):
     stop_time = (db.session.query(func.max(Subreddit.last_spam))
                  .filter(Subreddit.enabled == True).one()[0])
     check_items('spam', items, sr_dict, stop_time)
-    print('KABOOM  ', db.session.query(func.max(Subreddit.last_spam)).filter(Subreddit.enabled == True).statement)
-
+    
     # check new submissions
     items = mod_subreddit.get_new_by_date(limit=1000)
     stop_time = (db.session.query(func.max(Subreddit.last_submission))
@@ -722,7 +721,7 @@ def main():
     
     # do actions on subreddits
     do_subreddits(mod_subreddit, sr_dict, start_utc)
-
+    
 
     #
     # Do actions on networks
