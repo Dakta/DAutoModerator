@@ -562,6 +562,8 @@ def get_meme_name(item):
     return None
     
 def get_moderationlog(subreddit):
+    # INCOMPLETE, NON-FUNCTIONAL
+    
     """Retrieves a subreddit's moderation log, in lieu of a functional API implementation"""
     url = 'http://reddit.com/r/%s/about/log/' % subreddit
     

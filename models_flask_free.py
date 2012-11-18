@@ -83,9 +83,9 @@ class Network(Base):
     enabled - network will be ignored if False
     network_subreddit - if the network has a master subreddit, that subreddit's name.
     moderation_subreddit - Subreddit to post removals to, ala r/ModerationPorn
-    network_mods - if True, all mods of all network subreddits will be made mods
+    network_master_mods - if True, all mods of all network subreddits will be made mods
         of the master subreddit. requires valid `subreddit`
-    network_contribs - if True, all mods of all network subreddits will be made
+    network_master_contribs - if True, all mods of all network subreddits will be made
         approved submitters of the master subreddit. requires valid `subreddit`
     
     """
